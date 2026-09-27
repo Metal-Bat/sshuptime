@@ -1,0 +1,113 @@
+[tools]
+python = "3.14.7"
+uv = "0.12.9"
+ruff = "0.16.6"
+ty = "0.0.78"
+pre-commit = "4.6.2"
+rtk = "0.47.0"
+"pipx:graphifyy" = "0.9.53"
+"pipx:commitizen" = "4.19.0"
+
+[tasks.setup]
+description = "Initial project setup"
+run = """
+uv sync
+pre-commit install
+pre-commit install --hook-type commit-msg
+"""
+
+[tasks.fmt]
+description = "Format source code with Ruff"
+run = "uv run ruff format src tests"
+
+[tasks.fmt-check]
+description = "Check formatting without changing files"
+run = "uv run ruff format --check src tests"
+
+[tasks.lint]
+description = "Run Ruff linter"
+run = "uv run ruff check ."
+
+[tasks.lint-fix]
+description = "Run Ruff linter and auto-fix issues"
+run = "uv run ruff check . --fix"
+
+[tasks.typecheck]
+description = "Run static type checking"
+run = "uv run ty check"
+
+[tasks.test]
+description = "Run test suite"
+run = "uv run pytest"
+
+[tasks.coverage]
+description = "Run tests with coverage report"
+run = """
+uv run pytest \
+  --cov=src \
+  --cov-fail-under=80 \
+  --cov-report=term-missing \
+  --cov-report=html
+"""
+
+[tasks.graphify]
+description = "Generate the project knowledge graph"
+run = "graphify ."
+
+[tasks.i18n-extract]
+description = "Extract gettext messages from Python sources"
+run = "uv run pybabel extract -F babel.cfg -o src/locales/messages.pot ."
+
+[tasks.i18n-update]
+description = "Merge extracted messages into every locale catalog"
+run = "uv run pybabel update -i src/locales/messages.pot -d src/locales"
+
+[tasks.i18n-compile]
+description = "Compile gettext catalogs used by the application"
+run = "uv run pybabel compile -d src/locales"
+
+[tasks.rtk-gain]
+description = "Show RTK token savings for this project"
+run = "rtk gain"
+
+[tasks.benchmark]
+description = "Run benchmark suite"
+run = "uv run pytest benchmarks/ --benchmark-only"
+
+[tasks.security]
+description = "Run security scanners"
+run = """
+uv run bandit -r src
+uv run detect-secrets scan src tests
+"""
+
+[tasks.check]
+description = "Run all quality checks"
+depends = [
+  "fmt-check",
+  "lint",
+  "typecheck",
+  "security",
+  "test",
+]
+
+[tasks.commit]
+description = "Create conventional commit interactively"
+run = "uv run cz commit"
+
+[tasks.bump]
+description = "Bump semantic version and generate changelog"
+run = "uv run cz bump"
+
+[tasks.clean]
+description = "Remove caches and temporary files"
+run = """
+find . -type d -name '__pycache__' -exec rm -rf {} +
+find . -type d -name '.pytest_cache' -exec rm -rf {} +
+find . -type d -name '.ruff_cache' -exec rm -rf {} +
+find . -type d -name '.mypy_cache' -exec rm -rf {} +
+"""
+
+[tasks.demo]
+description = "Open the live dashboard with simulated infrastructure"
+run = "uv run sshuptime demo"
