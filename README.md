@@ -189,8 +189,9 @@ sharing production metadata.
 > namespaces**, **list nodes**, and **get pod logs in all namespaces**. SSH
 > dashboard users do not supply their own Kubernetes credentials. When running
 > in a pod, grant these permissions to its ServiceAccount; otherwise grant them
-> to the identity in the runner's kubeconfig. A kubeconfig path alone does not
-> grant access.
+> to the identity in the runner's kubeconfig. When using kubeconfig, the Linux
+> account running `sshuptime` must also be able to read it and any credential
+> files it references. A kubeconfig path alone does not grant API access.
 
 For an in-cluster runner, this is an example of the required read-only RBAC.
 Replace `sshuptime` and `monitoring` in the binding with the runner's actual
@@ -312,17 +313,19 @@ allowlist of client **public** keys:
 # Skip this copy if you already have sshuptime.yaml:
 cp sshuptime.example.yaml sshuptime.yaml
 ssh-keygen -t ed25519 -f ./ssh_host_ed25519_key -N ''
-cp ~/.ssh/id_ed25519.pub ./dashboard_authorized_keys
+# If the same clients should access sshuptime and this Linux account:
+cp ~/.ssh/authorized_keys ./dashboard_authorized_keys
 # Edit sshuptime.yaml for this machine, then start the SSH gateway:
 uv run sshuptime serve --config ./sshuptime.yaml
 # In another terminal on this machine:
 ssh -t -p 8022 monitor@127.0.0.1
 ```
 
-The `cp` command assumes the connecting user already has an Ed25519 SSH key.
-If not, create one with `ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519`, then copy
-its `.pub` file. For another client computer, put that client's public key in
-`dashboard_authorized_keys` on the server. Set `ssh.host` to `0.0.0.0` to accept
+The `cp` command works when the Linux account already has an `authorized_keys`
+file and you want to allow those same clients into the dashboard. It copies a
+snapshot: later changes to `~/.ssh/authorized_keys` will not update the dashboard
+allowlist. Otherwise, put the desired clients' public keys in
+`dashboard_authorized_keys` yourself. Set `ssh.host` to `0.0.0.0` to accept
 remote connections, and connect to the server's reachable address. The host key
 is the server's **private** key; `authorized_keys` contains allowed client
 **public** keys. Do not point it at `~/.ssh/known_hosts`.
@@ -413,6 +416,47 @@ client public-key allowlist as shown above, and set `ssh.host_key` and
 `authorized_keys` must point to the client **public-key allowlist**, not
 `~/.ssh/known_hosts`. Use `pwd` from the checkout to find its absolute path.
 
+### Files and permissions required
+
+> **The Linux account running `sshuptime.service` needs access to every file it
+> uses.** For this user service, that is the account running `systemctl --user`;
+> the SSH dashboard login name (`monitor` in the example) does not change the
+> service's Linux identity.
+
+| File or resource | Required access |
+| --- | --- |
+| `ssh.host_key` | Read the **private server host key**. The recommended `./ssh_host_ed25519_key` is created and owned by the service user. The `.pub` file cannot be used here. |
+| `ssh.authorized_keys` | Read the **client public-key allowlist**. Use `./dashboard_authorized_keys`, or point directly to `~/.ssh/authorized_keys` if the same clients should be allowed and the service user can read it. `known_hosts` is not an allowlist. |
+| `sources.kubeconfig` | Read the kubeconfig and any certificate/key files it refers to, reach the Kubernetes API, and have the [Kubernetes permissions listed above](#kubernetes-permissions-required). |
+
+From the checkout as the service user, check the example file paths before
+starting the service:
+
+```sh
+test -r ./ssh_host_ed25519_key && test -r ./dashboard_authorized_keys && echo "SSH files readable"
+test -r ~/.kube/config && echo "kubeconfig readable"  # If sources.kubeconfig uses this path.
+```
+
+The system SSH server's `/etc/ssh/ssh_host_ed25519_key` is normally owned by
+root. Keep that key for the system server and generate a separate host key for
+sshuptime with `ssh-keygen -t ed25519 -f ./ssh_host_ed25519_key -N ''` in the
+checkout. Do not make the system host key group/world-readable or grant the
+service user an ACL on it: the ACL mask can change the file's group permission
+bits, and OpenSSH can then reject the key (see [acl(5)](https://man7.org/linux/man-pages/man5/acl.5.html)
+and [sshd_config(5)](https://man7.org/linux/man-pages/man5/sshd_config.5.html)).
+If you previously added an ACL for `erfan` on that system key, remove it with
+`sudo setfacl -x u:erfan /etc/ssh/ssh_host_ed25519_key` and verify that the key
+is still owned by root with mode `600` using
+`stat -c '%a %U %G' /etc/ssh/ssh_host_ed25519_key`.
+
+If the service log says `Permission denied: '/etc/ssh/ssh_host_ed25519_key'`,
+the user service is still configured to read the root-owned system key. Create
+the separate key above, set `ssh.host_key: "./ssh_host_ed25519_key"` in the
+server's `sshuptime.yaml`, and restart the service. With `Restart=on-failure`,
+that permission error causes a restart loop and the dashboard port refuses
+connections. If the log still names `/etc/ssh/...`, check for a `--host-key`
+flag or `SSHUPTIME_SSH__HOST_KEY` value overriding the YAML.
+
 Run `mkdir -p ~/.config/systemd/user`, then create
 `~/.config/systemd/user/sshuptime.service` with the following contents,
 replacing every `/absolute/path/to/sshuptime` with that checkout path:
@@ -424,13 +468,17 @@ Description=sshuptime SSH dashboard
 [Service]
 Type=simple
 WorkingDirectory=/absolute/path/to/sshuptime
-ExecStart=/absolute/path/to/sshuptime/.venv/bin/sshuptime serve --config /absolute/path/to/sshuptime/sshuptime.yaml
+ExecStart=/absolute/path/to/sshuptime/.venv/bin/sshuptime serve
 Restart=on-failure
 RestartSec=3
 
 [Install]
 WantedBy=default.target
 ```
+
+`WorkingDirectory` makes sshuptime discover `sshuptime.yaml` in the checkout,
+so `--config` is optional here. An explicit `--config` also works and fails at
+startup if the named YAML file is missing.
 
 Then start it and inspect its status or logs:
 
@@ -441,14 +489,55 @@ systemctl --user status sshuptime.service
 journalctl --user -u sshuptime.service -f
 ```
 
-To have the user service start at boot and continue after logout, enable linger
-for that account once with `sudo loginctl enable-linger "$(whoami)"`.
+> **Keep the dashboard available after logout:** enable linger for the Linux
+> account running this user service. Without it, systemd can stop the user's
+> service manager when the last login session closes; the dashboard port then
+> refuses connections until that account logs in again. Run once on the server:
+
+```sh
+sudo loginctl enable-linger "$(whoami)"
+loginctl show-user "$(whoami)" -p Linger  # Expect Linger=yes.
+```
+
+Linger also starts the user manager at boot. If the journal shows repeated
+`Stopping sshuptime.service` / `Started sshuptime.service` entries under new
+`systemd --user` process IDs, check this setting first.
+
 After changing the YAML or unit, run `systemctl --user restart sshuptime.service`
 (and `systemctl --user daemon-reload` first if the unit changed).
+
+To use your own dashboard login name, set `ssh.username: "erfan"` in the YAML
+used by the service, restart it, and connect with that name. Replace `8022`
+below with your configured `ssh.port` (for example, `2244` on `rpi4`):
+
+```sh
+systemctl --user restart sshuptime.service
+ssh -t -p 8022 erfan@SERVER_IP_OR_DNS
+```
+
+`daemon-reload` reads changes to the unit file; `enable --now` does not restart
+an already running service or reload YAML. The startup log prints the accepted
+dashboard username (`user erfan` in this example). If it still says
+`user monitor`, check the unit's `WorkingDirectory`, the YAML in that directory, and
+any `--username` flag, `SSHUPTIME_SSH__USERNAME` environment variable, or
+checkout `.env` value overriding the YAML.
 
 For access from another computer, set `ssh.host: "0.0.0.0"` in the YAML, allow
 inbound TCP traffic to the configured port (default `8022`) on the server, and
 connect with a private key whose public key is in `ssh.authorized_keys`:
+
+```sh
+sudo ufw allow 8022/tcp
+sudo ufw status numbered
+```
+
+To allow only one client IP, use
+`sudo ufw allow from CLIENT_IP to any port 8022 proto tcp` instead of the
+general rule. Keep the separate firewall rule for the system SSH server on
+its configured port. For example, if system SSH uses `2233/tcp` and sshuptime
+uses `2244/tcp`, both ports need their own rules.
+Allow the system SSH port before enabling UFW on a remote machine so you can
+still administer it.
 
 ```sh
 ssh -t -i ~/.ssh/id_ed25519 -p 8022 monitor@SERVER_IP_OR_DNS
@@ -457,6 +546,38 @@ ssh -t -i ~/.ssh/id_ed25519 -p 8022 monitor@SERVER_IP_OR_DNS
 `monitor` is the configured `ssh.username`, not the Linux account running the
 service. The dashboard and its Kubernetes collector use that Linux account's
 permissions and kubeconfig; see [Kubernetes permissions required](#kubernetes-permissions-required).
+
+If the service exits with `host_key file does not exist`, check that the YAML
+on the **machine running the service** uses the `./ssh_host_ed25519_key` and
+`./dashboard_authorized_keys` paths from the example. From that machine's
+checkout, create the host key under the account running the service:
+
+```sh
+ssh-keygen -t ed25519 -f ./ssh_host_ed25519_key -N ''
+# If these are the clients you want to allow into the dashboard:
+cp ~/.ssh/authorized_keys ./dashboard_authorized_keys
+```
+
+The `cp` line is for servers like `rpi4` where this Linux account's existing
+`authorized_keys` already lists the clients you want to admit. If that file is
+absent or you want a different set of clients, copy their **public** keys into
+`dashboard_authorized_keys` instead. For example, if the client can
+already use ordinary SSH to reach the server, run this on the client (replace
+the Linux user, address, and checkout path):
+
+```sh
+scp ~/.ssh/id_ed25519.pub LINUX_USER@SERVER_IP_OR_DNS:/absolute/path/to/sshuptime/dashboard_authorized_keys
+```
+
+Then run `systemctl --user restart sshuptime.service` on the server. If you
+need multiple clients, append each public key on its own line instead of
+overwriting the file.
+
+The host key belongs to this SSH server; it is separate from the client's
+private key. `~/.ssh/known_hosts` is a list of trusted servers and cannot be
+used as the client-key allowlist. Check the service's configured paths and logs
+with `systemctl --user status sshuptime.service` and
+`journalctl --user -u sshuptime.service -n 50`.
 
 ## Development
 
