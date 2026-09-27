@@ -1,0 +1,32 @@
+# Copy to sshuptime.yaml, prepare the two SSH key files, then run:
+#   uv run sshuptime serve
+# Or use: uv run sshuptime serve --config /path/to/sshuptime.yaml
+# Paths below are relative to THIS file's directory. Absolute paths and ~ work too.
+ssh:
+  host: "127.0.0.1" # Use "0.0.0.0" to accept connections from other computers.
+  port: 8022
+  username: "monitor"
+  host_key: "./ssh_host_ed25519_key" # Server private host key (file path).
+  authorized_keys: "./dashboard_authorized_keys" # Allowed client PUBLIC keys.
+
+dashboard:
+  mode: "live"      # Use "demo" for animated sample data.
+  theme: "sshuptime" # Also try nord, dracula, gruvbox, textual-light.
+  interval: 2 # Refresh seconds, between 0.2 and 3600.
+
+
+sources:
+  # Optional; otherwise the adapters try the default local sockets/config.
+  # podman_socket: "/run/user/1000/podman/podman.sock"
+  # kubeconfig: "~/.kube/config"
+  # kube_context: "my-context"
+  # request_timeout: 3
+  # log_lines: 40
+  # log_bytes: 32768
+  # max_log_items: 12
+  # journal_lines: 50
+  # cron_history_lines: 500
+
+# Live mode reads this machine and any reachable local engines/cluster.
+# Priority: CLI > environment > .env > YAML > defaults.
+# Restart the server to reload changes. See .env.example for environment names.

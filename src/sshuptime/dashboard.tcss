@@ -1,0 +1,49 @@
+Screen { background: $background; color: $foreground; }
+#brand { height: 2; padding: 0 1; color: $text-accent; text-style: bold; background: $surface; }
+#identity { height: 3; padding: 0 1; }
+.identity-item { height: 3; width: 1fr; border: round $border; background: $surface; color: $text-accent; padding: 0 1; margin: 0 1 0 0; text-overflow: ellipsis; content-align-vertical: middle; }
+#identity-linux { width: 2fr; }
+#connection { height: 2; padding: 0 2; color: $text-muted; }
+#metrics { height: 7; padding: 0 1; }
+.metric { width: 1fr; border: round $border; padding: 0 1; margin: 0 1 0 0; overflow: auto auto; }
+.metric-label { color: $text-muted; text-style: bold; }
+Sparkline { height: 2; color: $text-accent; }
+#filter { margin: 0 1; height: 3; border: tall $border; }
+#filter:focus { border: tall $accent; }
+#runtimes { height: 1fr; min-height: 12; margin: 0 1; }
+TabPane { padding: 0; }
+Inventory { height: 1fr; }
+.inventory-list { width: 3fr; border: round $border; margin-right: 1; }
+.inspector { width: 2fr; min-width: 28; border: round $border; }
+.block-title { height: 1; padding: 0 1; background: $surface; color: $text-muted; text-style: bold; }
+DataTable { height: 1fr; background: $background; }
+DataTable > .datatable--header { background: $surface; color: $text-muted; text-style: bold; }
+DataTable > .datatable--cursor { background: $block-cursor-background; color: $block-cursor-foreground; }
+.count { height: 2; color: $text-muted; }
+.details, .manifest { padding: 1; height: auto; }
+VerticalScroll { height: 1fr; overflow: auto auto; }
+RichLog { background: $background; scrollbar-size: 1 1; }
+#events-box { height: 6; border: round $border; margin: 0 1; }
+#events { height: 1fr; padding: 0 1; }
+Footer { background: $surface; }
+Tabs { background: $surface; }
+Tab.-active { color: $text-accent; text-style: bold; }
+Underline > .underline--bar { color: $text-accent; }
+
+Screen.short #brand { height: 1; }
+Screen.short #identity { height: 1; }
+Screen.short .identity-item { height: 1; border: none; padding: 0 1; margin: 0; }
+Screen.short #connection { height: 1; }
+Screen.short #filter { height: 1; border: none; }
+Screen.short #metrics { height: 4; }
+Screen.short Sparkline { display: none; }
+Screen.short #events-box { height: 4; }
+Screen.short #runtimes { min-height: 8; }
+Screen.short .count { height: 1; }
+Screen.narrow .inspector { width: 1fr; min-width: 24; }
+Screen.narrow .inventory-list { width: 1fr; }
+Screen.narrow .metric { padding: 0; margin: 0; }
+
+Sparkline > .sparkline--max-color { color: $text-accent; }
+Sparkline > .sparkline--min-color { color: $block-cursor-background; }
+#metric-cpu, #metric-memory, #metric-disk { color: $text-accent; }
