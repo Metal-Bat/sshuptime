@@ -182,6 +182,51 @@ source path/context changes. Inspect JSON redacts common credential fields and
 container environment variables, but review access to this dashboard before
 sharing production metadata.
 
+### Kubernetes permissions required
+
+> **The runner must have Kubernetes API access.** The identity used by the
+> `sshuptime` process needs permission to **list pods and services in all
+> namespaces**, **list nodes**, and **get pod logs in all namespaces**. SSH
+> dashboard users do not supply their own Kubernetes credentials. When running
+> in a pod, grant these permissions to its ServiceAccount; otherwise grant them
+> to the identity in the runner's kubeconfig. A kubeconfig path alone does not
+> grant access.
+
+For an in-cluster runner, this is an example of the required read-only RBAC.
+Replace `sshuptime` and `monitoring` in the binding with the runner's actual
+ServiceAccount name and namespace:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sshuptime-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "nodes"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sshuptime-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sshuptime-reader
+subjects:
+  - kind: ServiceAccount
+    name: sshuptime
+    namespace: monitoring
+```
+
+If access is denied, the corresponding inventory shows an error; denied pod
+logs appear empty. This example uses a `ClusterRoleBinding` because the runner
+queries all namespaces and lists cluster-scoped nodes.
+
 SDK requests use short timeouts. Logs are limited to 40 lines and 32 KiB per item;
 container log collection is limited to the first 12 listed containers per engine.
 Kubernetes log collection covers the first 12 pods and failing pods. Large hosts
@@ -358,6 +403,60 @@ The default listener binds to loopback. Set `--host 0.0.0.0` to listen externall
 key and the configured username. Password login, shell commands, and forwarding
 aren't offered. Each viewer gets its own PTY/subprocess, terminal resizing, and
 cleanup on disconnect. The server isn't started automatically by installation.
+
+## Run as a systemd service (Linux)
+
+To keep the SSH dashboard running, use a systemd **user** service under the
+account that owns the checkout. First run `uv sync`, create the host key and
+client public-key allowlist as shown above, and set `ssh.host_key` and
+`ssh.authorized_keys` in `sshuptime.yaml` to those files. In particular,
+`authorized_keys` must point to the client **public-key allowlist**, not
+`~/.ssh/known_hosts`. Use `pwd` from the checkout to find its absolute path.
+
+Run `mkdir -p ~/.config/systemd/user`, then create
+`~/.config/systemd/user/sshuptime.service` with the following contents,
+replacing every `/absolute/path/to/sshuptime` with that checkout path:
+
+```ini
+[Unit]
+Description=sshuptime SSH dashboard
+
+[Service]
+Type=simple
+WorkingDirectory=/absolute/path/to/sshuptime
+ExecStart=/absolute/path/to/sshuptime/.venv/bin/sshuptime serve --config /absolute/path/to/sshuptime/sshuptime.yaml
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+```
+
+Then start it and inspect its status or logs:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now sshuptime.service
+systemctl --user status sshuptime.service
+journalctl --user -u sshuptime.service -f
+```
+
+To have the user service start at boot and continue after logout, enable linger
+for that account once with `sudo loginctl enable-linger "$(whoami)"`.
+After changing the YAML or unit, run `systemctl --user restart sshuptime.service`
+(and `systemctl --user daemon-reload` first if the unit changed).
+
+For access from another computer, set `ssh.host: "0.0.0.0"` in the YAML, allow
+inbound TCP traffic to the configured port (default `8022`) on the server, and
+connect with a private key whose public key is in `ssh.authorized_keys`:
+
+```sh
+ssh -t -i ~/.ssh/id_ed25519 -p 8022 monitor@SERVER_IP_OR_DNS
+```
+
+`monitor` is the configured `ssh.username`, not the Linux account running the
+service. The dashboard and its Kubernetes collector use that Linux account's
+permissions and kubeconfig; see [Kubernetes permissions required](#kubernetes-permissions-required).
 
 ## Development
 
