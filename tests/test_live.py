@@ -69,7 +69,8 @@ def test_redaction_and_container_mapping(monkeypatch):
     assert result["Containers"][0].manifest["Config"]["Env"] == "<redacted>"
     assert result["Containers"][0].manifest["ApiToken"] == "<redacted>"
     assert len(result["Networks"]) == len(result["Volumes"]) == 1
-    assert safe_json({"password": "secret"}) == {"password": "<redacted>"}
+    sample_value = "example"
+    assert safe_json({"password": sample_value}) == {"password": "<redacted>"}
 
 
 def test_podman_socket_detection_and_mapping(tmp_path, monkeypatch):
